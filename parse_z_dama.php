@@ -9,6 +9,8 @@ class parseZDama
     private $gl_id = 1;
     private $arr_product = array();
 
+    private $arr_include_extrude = array();
+
     public function getCatalogLinks()
     {
         // на всякий случай проверяем массивы
@@ -109,13 +111,93 @@ class parseZDama
         return $sql;
     }
 
+    // Формируем sql с полями productID, productUrl, sizeValue, отдельными строками
+    public function generateSQLMultiRowSize()
+    {
+        $sql = "";
+
+        $this->prepareProductSizes($this->arr_product);
+
+        foreach ($this->arr_product as $product) {
+            // По ТЗ формируем размер в виде строки
+            foreach ($product["size"] as $product_size) {
+                $sql .= "INSERT INTO `Products` (`productID`, `productUrl`, `sizeValue`) VALUES (" . $product["id"] . ", '<a target=\"_blank\" href=\"" . $product["url"] . "\">" . $product["url"] . "</a>', '" . $product_size . "');<br />";
+            }
+        }
+        return $sql;
+    }
+
+    // Проверяем на дубли по размерам и удаляем одинаковые размеры (но на сайте такого не увидел, также возникает конфликт какое количество брать? Пока наименьшее)
+    public function prepareProductSizes(&$array)
+    {
+        $new_array = array();
+        foreach ($array as $element) {
+
+            $new_array_sizes = array();
+            $new_array_quantity = array();
+
+            for ($i = 0; $i < count($element["size"]); $i++) {
+
+                $element_size = $element["size"][$i];
+                $element_quantity = $element["quantity"][$i];
+                $element_finded = false;
+
+                for ($j = 0; $j < count($new_array_sizes); $j++) {
+                    $new_element = $new_array_sizes[$j];
+                    if ($new_element == $element_size) {
+                        if ($element_quantity < $new_array_quantity[$j]) {
+                            $new_array_quantity[$j] = $element_quantity;
+                        }
+                        $element_finded = true;
+                    }
+                }
+
+                if (!$element_finded) {
+                    array_push($new_array_sizes, $element_size);
+                    array_push($new_array_quantity, $element_quantity);
+                }
+            }
+
+            $element["size"] = $new_array_sizes;
+            $element["quantity"] = $new_array_quantity;
+            array_push($new_array, $element);
+
+        }
+        $array = $new_array;
+    }
+
+    // Формируем sql для включения/исключения из видимости на сайте
+    public function generateSQLShowed($inc_ex = "отключение")
+    {
+        $sql = "";
+        $type_inc_ex = 1; // массив с id на отключение
+        $product_flag = 0;
+
+        if ($inc_ex == "включение") {
+            $type_inc_ex = 0;
+            $product_flag = 1;
+        }
+
+        $sql = "UPDATE `Products` SET `productShowed` = " . $product_flag . " WHERE `id` IN (" . implode(",", $this->arr_include_extrude[$type_inc_ex]) . ");<br />";
+
+        // Либо отдельными запросами
+        /*
+        foreach ($this->arr_include_extrude[$type_inc_ex] as $product_id) {
+            $sql .= "UPDATE `Products` SET `productShowed` = " . $product_flag . " WHERE `id` = " . $product_id . ";<br />";
+        }
+        */
+        return $sql;
+    }
+
     // Получаем массив из 2х типов
     // на подключение - наличие от двух и более разных размеров, у которых в наличии более 5 штук,
     // на отключение - если условия не выполняются
     public function productIncExt()
     {
-        $arr_include_extrude[0] = array();
-        $arr_include_extrude[1] = array();
+        $this->arr_include_extrude[0] = array();
+        $this->arr_include_extrude[1] = array();
+        //$arr_include_extrude[0] = array();
+        //$arr_include_extrude[1] = array();
 
         foreach ($this->arr_product as $product) {
             $count_include = 0;
@@ -143,12 +225,12 @@ class parseZDama
                 }
             }
             if ($count_include >= 1) {
-                array_push($arr_include_extrude[0], $product["id"]);
+                array_push($this->arr_include_extrude[0], $product["id"]);
             } else {
-                array_push($arr_include_extrude[1], $product["id"]);
+                array_push($this->arr_include_extrude[1], $product["id"]);
             }
         }
-        return $arr_include_extrude;
+        return $this->arr_include_extrude;
     }
 
 }
@@ -193,17 +275,69 @@ $z_dama->getCatalogLinks();
 
 // действия с полученными товарами
 $sql_insert = $z_dama->generateSQL();
+$sql_insert_multisize = $z_dama->generateSQLMultiRowSize();
 $product_include_extrude = $z_dama->productIncExt();
+
+$sql_update_extrude = $z_dama->generateSQLShowed();
+$sql_update_include = $z_dama->generateSQLShowed("включение");
 
 echo "<h2>SQL запросы на insert:</h2><br />";
 echo $sql_insert;
+
+echo "<h2>SQL запросы на insert построчно:</h2><br />";
+echo $sql_insert_multisize;
+
 
 echo "<h2>ID товаров на включение:</h2><br />";
 echo "<pre>";
 print_r($product_include_extrude[0]);
 echo "</pre>";
 
+echo "<strong>SQL на включение товаров:</strong><br />";
+echo "<pre>";
+echo $sql_update_include;
+echo "</pre>";
+
+
 echo "<h2>ID товаров на отключение:</h2><br />";
 echo "<pre>";
 print_r($product_include_extrude[1]);
+echo "</pre>";
+
+echo "<strong>SQL на отключение товаров:</strong><br />";
+echo "<pre>";
+echo $sql_update_extrude;
+echo "</pre>";
+
+
+
+echo "<h2>Тест дублей в массиве по размерам и выбор наименьшего количества товаров:</h2><br />";
+
+$arr[0]["url"] = "url";
+$arr[0]["size"][0] = 1;
+$arr[0]["size"][1] = 2;
+$arr[0]["quantity"][0] = 1;
+$arr[0]["quantity"][1] = 2;
+$arr[1]["url"] = "url";
+$arr[1]["size"][0] = 1;
+$arr[1]["size"][1] = 2;
+$arr[1]["size"][2] = 2;
+$arr[1]["size"][3] = 3;
+$arr[1]["size"][4] = 4;
+$arr[1]["size"][5] = 4;
+$arr[1]["quantity"][0] = 1;
+$arr[1]["quantity"][1] = 2;
+$arr[1]["quantity"][2] = 1;
+$arr[1]["quantity"][3] = 5;
+$arr[1]["quantity"][4] = 7;
+$arr[1]["quantity"][5] = 3;
+
+echo "<pre>";
+print_r($arr);
+echo "</pre>";
+
+$z_dama->prepareProductSizes($arr);
+
+echo "<pre>";
+print_r($arr);
 echo "</pre>";
